@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: #0a0e17;
+  color: #e5e9f0;
+}
+
+/* Range inputs that look at home in a medical tool */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 9999px;
+  background: #243049;
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #6ea8fe;
+  cursor: pointer;
+  border: 2px solid #0a0e17;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #6ea8fe;
+  cursor: pointer;
+  border: 2px solid #0a0e17;
+}
+
+.canvas-wrap {
+  background:
+    linear-gradient(45deg, #0c111b 25%, transparent 25%),
+    linear-gradient(-45deg, #0c111b 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #0c111b 75%),
+    linear-gradient(-45deg, transparent 75%, #0c111b 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
