@@ -1,0 +1,16 @@
+{
+  "ct": "ct.nii.gz",
+  "masks": [
+    "liver.nii.gz",
+    "spleen.nii.gz",
+    "stomach.nii.gz",
+    "pancreas.nii.gz",
+    "gall_bladder.nii.gz",
+    "aorta.nii.gz",
+    "kidney_left.nii.gz",
+    "kidney_right.nii.gz",
+    "liver_tumor.nii.gz",
+    "femur_left.nii.gz",
+    "femur_right.nii.gz"
+  ]
+}
