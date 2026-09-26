@@ -14,12 +14,15 @@ export interface Overlay {
 interface Props {
   ct: NiftiVolume;
   mapping: PlaneMapping;
-  slice: number;
+  /** shared 3-D voxel focus [x,y,z] for the linked crosshair */
+  focus: [number, number, number];
   lut: Uint8ClampedArray;
   lutMinHU: number;
   overlays: Overlay[];
   opacity: number;
   maxSize?: number;
+  showCrosshair?: boolean;
+  onPick?: (hVoxel: number, vVoxel: number) => void;
   onWheelSlice?: (delta: number) => void;
 }
 
@@ -30,15 +33,19 @@ function strides(dims: [number, number, number]): [number, number, number] {
 export default function SliceCanvas({
   ct,
   mapping,
-  slice,
+  focus,
   lut,
   lutMinHU,
   overlays,
   opacity,
   maxSize = 340,
+  showCrosshair = true,
+  onPick,
   onWheelSlice,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { hAxis, vAxis, sliceAxis, flipH, flipV, hPixels, vPixels } = mapping;
+  const slice = focus[sliceAxis];
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -46,7 +53,6 @@ export default function SliceCanvas({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const { hAxis, vAxis, sliceAxis, flipH, flipV, hPixels, vPixels } = mapping;
     canvas.width = hPixels;
     canvas.height = vPixels;
 
@@ -63,16 +69,18 @@ export default function SliceCanvas({
     const op = opacity;
     const inv = 1 - op;
 
-    // Precompute overlay stride sets (masks share the CT grid; guarded upstream)
-    const ov = overlays.map((o) => ({
-      data: o.vol.data,
-      slope: o.vol.sclSlope,
-      inter: o.vol.sclInter,
-      colors: o.colors,
-      base: slice * strides(o.vol.dims)[sliceAxis],
-      sH: strides(o.vol.dims)[hAxis],
-      sV: strides(o.vol.dims)[vAxis],
-    }));
+    const ov = overlays.map((o) => {
+      const s = strides(o.vol.dims);
+      return {
+        data: o.vol.data,
+        slope: o.vol.sclSlope,
+        inter: o.vol.sclInter,
+        colors: o.colors,
+        base: slice * s[sliceAxis],
+        sH: s[hAxis],
+        sV: s[vAxis],
+      };
+    });
 
     let p = 0;
     for (let sv = 0; sv < vPixels; sv++) {
@@ -90,7 +98,6 @@ export default function SliceCanvas({
         let g = r;
         let b = r;
 
-        // overlays (topmost visible label wins)
         for (let k = 0; k < ov.length; k++) {
           const o = ov[k];
           const mIdx = o.base + voxelV * o.sV + voxelH * o.sH;
@@ -113,7 +120,7 @@ export default function SliceCanvas({
       }
     }
     ctx.putImageData(img, 0, 0);
-  }, [ct, mapping, slice, lut, lutMinHU, overlays, opacity]);
+  }, [ct, hAxis, vAxis, sliceAxis, flipH, flipV, hPixels, vPixels, slice, lut, lutMinHU, overlays, opacity]);
 
   // Display size preserving physical aspect ratio.
   const aspect = mapping.physW / mapping.physH;
@@ -122,25 +129,54 @@ export default function SliceCanvas({
   if (aspect >= 1) dispH = Math.round(maxSize / aspect);
   else dispW = Math.round(maxSize * aspect);
 
+  // Crosshair position (screen fractions), flip-aware.
+  const hScreen = flipH ? hPixels - 1 - focus[hAxis] : focus[hAxis];
+  const vScreen = flipV ? vPixels - 1 - focus[vAxis] : focus[vAxis];
+  const leftPct = ((hScreen + 0.5) / hPixels) * 100;
+  const topPct = ((vScreen + 0.5) / vPixels) * 100;
+
+  const handlePick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!onPick) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const fx = (e.clientX - rect.left) / rect.width;
+    const fy = (e.clientY - rect.top) / rect.height;
+    let sh = Math.floor(fx * hPixels);
+    let sv = Math.floor(fy * vPixels);
+    sh = Math.max(0, Math.min(hPixels - 1, sh));
+    sv = Math.max(0, Math.min(vPixels - 1, sv));
+    const voxelH = flipH ? hPixels - 1 - sh : sh;
+    const voxelV = flipV ? vPixels - 1 - sv : sv;
+    onPick(voxelH, voxelV);
+  };
+
   return (
     <div className="flex flex-col items-center">
       <div className="mb-1 text-[11px] uppercase tracking-wider text-slate-400">
         {mapping.name}
       </div>
       <div
-        className="canvas-wrap relative rounded border border-edge"
+        className="canvas-wrap relative cursor-crosshair overflow-hidden rounded border border-edge"
         style={{ width: dispW, height: dispH }}
+        onClick={handlePick}
         onWheel={(e) => {
           if (!onWheelSlice) return;
           e.preventDefault();
           onWheelSlice(e.deltaY > 0 ? 1 : -1);
         }}
       >
-        <canvas
-          ref={canvasRef}
-          className="h-full w-full"
-          style={{ imageRendering: "auto" }}
-        />
+        <canvas ref={canvasRef} className="h-full w-full" style={{ imageRendering: "auto" }} />
+        {showCrosshair && (
+          <>
+            <div
+              className="pointer-events-none absolute top-0 bottom-0 w-px bg-cyan-400/60"
+              style={{ left: `${leftPct}%` }}
+            />
+            <div
+              className="pointer-events-none absolute left-0 right-0 h-px bg-cyan-400/60"
+              style={{ top: `${topPct}%` }}
+            />
+          </>
+        )}
         <OrientationLabels m={mapping} />
       </div>
     </div>
@@ -155,9 +191,7 @@ function OrientationLabels({ m }: { m: PlaneMapping }) {
       <span className={`${base} left-1 top-1/2 -translate-y-1/2`}>{m.left}</span>
       <span className={`${base} right-1 top-1/2 -translate-y-1/2`}>{m.right}</span>
       <span className={`${base} left-1/2 top-1 -translate-x-1/2`}>{m.top}</span>
-      <span className={`${base} left-1/2 bottom-1 -translate-x-1/2`}>
-        {m.bottom}
-      </span>
+      <span className={`${base} left-1/2 bottom-1 -translate-x-1/2`}>{m.bottom}</span>
     </>
   );
 }

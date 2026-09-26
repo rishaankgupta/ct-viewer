@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { parseNifti, labelSet, type NiftiVolume } from "@/lib/nifti";
-import { buildPlaneMappings } from "@/lib/geometry";
+import { buildPlaneMappings, type PlaneMapping } from "@/lib/geometry";
 import { buildWindowLUT, WINDOW_PRESETS } from "@/lib/windowing";
 import { colorForStructure, paletteColor, prettyName, type RGB } from "@/lib/colors";
 import SliceCanvas, { type Overlay } from "./SliceCanvas";
@@ -35,7 +35,7 @@ export default function Viewer() {
   const [center, setCenter] = useState(40);
   const [width, setWidth] = useState(400);
   const [opacity, setOpacity] = useState(0.45);
-  const [slices, setSlices] = useState({ Axial: 0, Coronal: 0, Sagittal: 0 });
+  const [focus, setFocus] = useState<[number, number, number]>([0, 0, 0]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,20 +74,28 @@ export default function Viewer() {
     return [...byMask.values()];
   }, [structures, masks, ct]);
 
-  const resetSlices = (vol: NiftiVolume) => {
-    const m = buildPlaneMappings(vol.affine, vol.dims, vol.pixdim);
-    setSlices({
-      Axial: Math.floor(m.Axial.nSlices / 2),
-      Coronal: Math.floor(m.Coronal.nSlices / 2),
-      Sagittal: Math.floor(m.Sagittal.nSlices / 2),
-    });
+  const resetFocus = (vol: NiftiVolume) => {
+    setFocus([
+      Math.floor(vol.dims[0] / 2),
+      Math.floor(vol.dims[1] / 2),
+      Math.floor(vol.dims[2] / 2),
+    ]);
   };
+
+  // Hounsfield value under the crosshair (nice readout + proves indexing).
+  const focusHU = useMemo(() => {
+    if (!ct) return null;
+    const [x, y, z] = focus;
+    const i = x + ct.dims[0] * (y + ct.dims[1] * z);
+    if (i < 0 || i >= ct.data.length) return null;
+    return Math.round(ct.data[i] * ct.sclSlope + ct.sclInter);
+  }, [ct, focus]);
 
   const loadCtBuffer = useCallback((buf: ArrayBuffer, name: string) => {
     const vol = parseNifti(buf);
     setCt(vol);
     setCtName(name);
-    resetSlices(vol);
+    resetFocus(vol);
     // choose a sensible default window from datatype
     if (vol.max <= 2) {
       setCenter(0.5);
@@ -205,11 +213,28 @@ export default function Viewer() {
     setStructures([]);
   };
 
-  const bumpSlice = (plane: keyof typeof slices, delta: number, max: number) =>
-    setSlices((prev) => ({
-      ...prev,
-      [plane]: Math.max(0, Math.min(max - 1, prev[plane] + delta)),
-    }));
+  const bumpSlice = (axis: number, delta: number, max: number) =>
+    setFocus((prev) => {
+      const f = [...prev] as [number, number, number];
+      f[axis] = Math.max(0, Math.min(max - 1, f[axis] + delta));
+      return f;
+    });
+
+  const setSliceAxis = (axis: number, val: number) =>
+    setFocus((prev) => {
+      const f = [...prev] as [number, number, number];
+      f[axis] = val;
+      return f;
+    });
+
+  // Click on any plane -> move the shared focus in that plane's two axes.
+  const pick = (m: PlaneMapping, vh: number, vv: number) =>
+    setFocus((prev) => {
+      const f = [...prev] as [number, number, number];
+      f[m.hAxis] = vh;
+      f[m.vAxis] = vv;
+      return f;
+    });
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
@@ -286,6 +311,11 @@ export default function Viewer() {
             <div>
               dtype: {ct.datatypeName} · HU {Math.floor(ct.min)}…{Math.ceil(ct.max)}
             </div>
+            {focusHU !== null && (
+              <div className="mt-1 text-cyan-300">
+                crosshair: [{focus.join(", ")}] · {focusHU} HU
+              </div>
+            )}
           </div>
         )}
 
@@ -421,25 +451,24 @@ export default function Viewer() {
                     <SliceCanvas
                       ct={ct}
                       mapping={m}
-                      slice={slices[plane]}
+                      focus={focus}
                       lut={lutInfo.lut}
                       lutMinHU={lutInfo.minHU}
                       overlays={overlays}
                       opacity={opacity}
-                      onWheelSlice={(d) => bumpSlice(plane, d, m.nSlices)}
+                      onPick={(vh, vv) => pick(m, vh, vv)}
+                      onWheelSlice={(d) => bumpSlice(m.sliceAxis, d, m.nSlices)}
                     />
                     <input
                       type="range"
                       min={0}
                       max={m.nSlices - 1}
-                      value={slices[plane]}
-                      onChange={(e) =>
-                        setSlices((prev) => ({ ...prev, [plane]: Number(e.target.value) }))
-                      }
+                      value={focus[m.sliceAxis]}
+                      onChange={(e) => setSliceAxis(m.sliceAxis, Number(e.target.value))}
                       className="w-full max-w-[340px]"
                     />
                     <div className="text-[10px] text-slate-500">
-                      slice {slices[plane] + 1} / {m.nSlices}
+                      slice {focus[m.sliceAxis] + 1} / {m.nSlices}
                     </div>
                   </div>
                 );
